@@ -1,4 +1,5 @@
 import os
+import re
 import time
 
 import streamlit as st
@@ -100,6 +101,8 @@ with st.sidebar:
     st.header("Nasıl çalışır?")
     st.markdown("1️⃣ Formu doldur\n\n2️⃣ Yapay zekâ planını hazırlasın\n\n3️⃣ Bugün başla!")
     st.caption("⚠️ Bu bir sağlık tavsiyesi değildir.")
+    st.caption("🔒 Formdaki bilgiler plan hazırlamak için Google Gemini'ye gönderilir ve kaydedilmez. "
+               "Kimliğini belli edecek bilgi yazma.")
     st.caption(f"🤖 Model: {MODELLER[0]}")
 
 st.write("")
@@ -171,11 +174,13 @@ if gonder:
 
         def parcalar():
             """Gelen parçaların metnini sırayla verir (generator)."""
-            for parca in [ilk_parca, *akis] if False else _hepsi(ilk_parca, akis):
-                # Gemini bazen büyük parçalar gönderiyor; kelime kelime vererek akışı görünür kılıyoruz
-                for kelime in parca.split(" "):
-                    yield kelime + " "
-                    time.sleep(0.01)
+            for parca in _hepsi(ilk_parca, akis):
+                # Gemini bazen büyük parçalar gönderiyor; kelime kelime vererek akışı görünür kılıyoruz.
+                # re.split boşlukları da ayrı parça olarak korur, metin bozulmaz.
+                for kelime in re.split(r"(\s+)", parca):
+                    yield kelime
+                    if kelime.strip():
+                        time.sleep(0.004)  # kelime başına çok kısa bekleme: daktilo etkisi
 
         try:
             st.write_stream(parcalar())  # metni geldikçe ekrana yazar
