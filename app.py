@@ -121,6 +121,7 @@ with st.form("profil_formu"):
     with sag:
         st.subheader("📅 Program ve bütçe")
         gun = st.slider("Haftada kaç gün?", 1, 7, 3)
+        uyku = st.slider("Günde kaç saat uyuyorsun?", 4, 10, 7)
         yer = st.radio("Nerede?", ["🏋️ Spor salonu", "🏠 Ev"], horizontal=True)
         butce = st.number_input("Aylık supplement bütçen (TL)", 0, 10000, 500, step=100)
     saglik = st.text_area("🩺 Bilinen sağlık durumun var mı? (yoksa boş bırak)")
@@ -128,7 +129,7 @@ with st.form("profil_formu"):
 
 if gonder:
     profil = {"hedef": hedef, "seviye": seviye, "yaş": yas, "cinsiyet": cinsiyet,
-              "boy": boy, "kilo": kilo, "gün": gun, "yer": yer, "bütçe": butce,
+              "boy": boy, "kilo": kilo, "gün": gun, "yer": yer, "bütçe": butce,"uyku": uyku,
               "sağlık": saglik.strip() or "Yok"}
 
     makrolar = makro_hesapla(profil)  # kesin hesap kodla, yapay zekâyla değil

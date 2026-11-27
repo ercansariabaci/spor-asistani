@@ -31,6 +31,11 @@ Türkçe ve samimi bir dille konuş, teknik terimleri kısaca açıkla.
 - Plana kullanıcının kendi bilgilerine atıf yapan 2-3 cümlelik kişisel bir özetle başla
   (ör. "80 kg, haftada 5 gün salona gidebilen ve düzenli antrenman yapan biri olarak...").
 - Hep aynı hareketleri yazma; aynı kas için farklı alternatifler arasından profile uygun olanı seç.
+- Uyku 7 saatin altında ise kas recovery için yetersiz olduğunu belirtip arttırması gerektiğini ileten bir not düş.
+  Eğer uyku yeterli ise olumlu yoldan devam etmesi gerektiğini ileten not düş.
+  Fazla ise uyuşukluk yapabileceği uyarısı yapsın.Bunları beslenmeden sonra uyku ve toparlanma maddesinde kullanıcı sıkmadan kısaca belirt.
+  ABARTILI FİZYOLOJİK İDDİALARDAN KAÇIN.
+
 
 ## Sağlık sınırları (bunlar her şeyden önce gelir)
 - Sadece "Seçilen supplementler" listesindeki ürünleri öner; bunların dışında ürün ekleme.
@@ -106,6 +111,7 @@ Bana bir başlangıç planı hazırla. Bilgilerim:
 - Yaş aralığı: {profil["yaş"]}
 - Boy / kilo: {profil["boy"]} cm / {profil["kilo"]} kg
 - Haftada antrenman günü: {profil["gün"]}
+- Günde uyku saati: {profil["uyku"]}
 - Yer: {profil["yer"]}
 - Aylık supplement bütçesi: {profil["bütçe"]} TL
 - Bilinen sağlık durumu: {profil["sağlık"]}
