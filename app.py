@@ -8,7 +8,7 @@ from google import genai
 from google.genai import types
 
 from hesaplamalar import makro_hesapla
-from supplementler import supplement_sec
+from supplementler import supplement_sec, alternatifler
 from prompts import SISTEM_PROMPTU, kullanici_mesaji_olustur
 
 
@@ -127,12 +127,25 @@ with st.form("profil_formu"):
     saglik = st.text_area("🩺 Bilinen sağlık durumun var mı? (yoksa boş bırak)")
     gonder = st.form_submit_button("🚀 Planımı oluştur", use_container_width=True)
 
-if gonder:
-    profil = {"hedef": hedef, "seviye": seviye, "yaş": yas, "cinsiyet": cinsiyet,
-              "boy": boy, "kilo": kilo, "gün": gun, "yer": yer, "bütçe": butce,"uyku": uyku,
-              "sağlık": saglik.strip() or "Yok"}
+# st.session_state = sayfanın hafızası. Streamlit her tıklamada dosyayı baştan çalıştırır;
+# normal değişkenler o an sıfırlanır, session_state'tekiler ise kalır.
+hafiza = st.session_state
 
-    makrolar = makro_hesapla(profil)  # kesin hesap kodla, yapay zekâyla değil
+if gonder:  # sadece "Planımı oluştur"a basıldığı turda True
+    profil = {"hedef": hedef, "seviye": seviye, "yaş": yas, "cinsiyet": cinsiyet,
+              "boy": boy, "kilo": kilo, "gün": gun, "yer": yer, "bütçe": butce, "uyku": uyku,
+              "sağlık": saglik.strip() or "Yok"}
+    hafiza.profil = profil
+    hafiza.makrolar = makro_hesapla(profil)  # kesin hesap kodla, yapay zekâyla değil
+    hafiza.cikarilanlar = []   # "Değiştir" ile listeden çıkarılan ürünler
+    hafiza.eklenenler = []     # kullanıcının yerine kendi seçtiği ürünler
+    hafiza.plan = None         # yapay zekânın yazdığı plan metni
+    hafiza.plan_yaz = True     # bu turda yeni plan yazılsın mı?
+    hafiza.liste_degisti = False
+
+if "profil" in hafiza:  # form en az bir kez gönderildiyse sonuçları göster
+    profil, makrolar = hafiza.profil, hafiza.makrolar
+    butce = profil["bütçe"]
     if not makrolar:
         st.info("ℹ️ 18 yaş altı ya da bir sağlık durumu seçtiğin için supplement ve kalori hedefi verilmeyecek; "
                 "bunun yerine bir doktora/diyetisyene yönlendireceğiz.")
@@ -145,7 +158,8 @@ if gonder:
         m4.metric("Yağ", f'{makrolar["yag_g"]} g')
         st.caption(f'Faz: {makrolar["faz"]} · Koruma kalorin yaklaşık {makrolar["koruma_kalorisi"]:.0f} kcal')
 
-    supplementler = supplement_sec(profil, makrolar)  # bütçeyi kod doldurur
+    # bütçeyi kod doldurur; çıkarılanları atlar, kullanıcının seçtiklerini önce koyar
+    supplementler = supplement_sec(profil, makrolar, hafiza.cikarilanlar, hafiza.eklenenler)
     if supplementler:
         st.subheader("💊 Bütçene göre supplement seçimi")
         st.dataframe(
@@ -153,41 +167,79 @@ if gonder:
             hide_index=True, use_container_width=True)
         toplam = sum(u["aylik_tl"] for u in supplementler)
         st.caption(f"Toplam ~{toplam} TL / bütçe {butce} TL (%{toplam * 100 // max(butce, 1)} kullanıldı)")
+        if toplam < butce * 0.85:
+            st.info(f"ℹ️ Seviyene uygun ve etkisi araştırmalarla desteklenen ürünlerin hepsi listede. "
+                    f"Kalan ~{butce - toplam} TL için, sırf bütçe dolsun diye kanıtı zayıf ürün önermiyoruz. "
+                    "Seviyen arttıkça (ör. 'Biraz deneyimliyim') yeni performans ürünleri açılır.")
 
-    akis = None
-    with st.status("Plan hazırlanıyor... 🏃", expanded=True) as durum:
-        try:
-            ilk_parca, akis, kullanilan_model = akis_baslat(
-                kullanici_mesaji_olustur(profil, makrolar, supplementler), durum)
-            durum.update(label="Plan yazılıyor ✍️", state="complete", expanded=False)
-        except Exception as hata:
-            durum.update(label="Plan oluşturulamadı", state="error")
-            st.error(f"Biraz sonra tekrar dene. Hata: {hata}")
+        # 🔄 Değiştir: listedeki bir ürünü çıkar, yerine alternatif koy
+        with st.expander("🔄 Listede istemediğin bir ürün mü var? Değiştir"):
+            d1, d2 = st.columns(2)
+            cikan = d1.selectbox("Çıkarılacak ürün", supplementler, format_func=lambda u: u["ad"])
+            secenekler = [None] + alternatifler(profil, supplementler, cikan, hafiza.cikarilanlar)
+            yerine = d2.selectbox("Yerine ne gelsin?", secenekler, format_func=lambda u:
+                                  "Otomatik seç (bütçeye göre)" if u is None
+                                  else f'{u["ad"]} · ~{u["aylik_tl"]} TL · Kanıt: {u["kanit"]}')
+            if st.button("🔄 Değiştir"):
+                asil_ad = cikan.get("kaynak", cikan["ad"])  # "gün aşırı" gibi ekler olmadan asıl ad
+                hafiza.cikarilanlar.append(asil_ad)
+                if asil_ad in hafiza.eklenenler:
+                    hafiza.eklenenler.remove(asil_ad)
+                if yerine is not None:
+                    hafiza.eklenenler.append(yerine["ad"])
+                hafiza.liste_degisti = True
+                st.rerun()  # sayfayı yeni listeyle hemen baştan çiz
+            if hafiza.cikarilanlar:
+                st.caption("Çıkardıkların: " + ", ".join(hafiza.cikarilanlar))
+                if st.button("↩️ İlk öneriye dön"):
+                    hafiza.cikarilanlar, hafiza.eklenenler = [], []
+                    hafiza.liste_degisti = True
+                    st.rerun()
 
-    if akis:
-        def _hepsi(ilk, kalan):
-            """İlk parçayı ve kalan parçaların metinlerini sırayla verir."""
-            if ilk.text:
-                yield ilk.text
-            for parca in kalan:
-                if parca.text:
-                    yield parca.text
+        if hafiza.liste_degisti:
+            st.info("Supplement listen değişti. Aşağıdaki plan hâlâ eski listeye göre.")
+            if st.button("📝 Planı yeni listeyle güncelle"):
+                hafiza.plan, hafiza.plan_yaz, hafiza.liste_degisti = None, True, False
+                st.rerun()
 
-        def parcalar():
-            """Gelen parçaların metnini sırayla verir (generator)."""
-            for parca in _hepsi(ilk_parca, akis):
-                # Gemini bazen büyük parçalar gönderiyor; kelime kelime vererek akışı görünür kılıyoruz.
-                # re.split boşlukları da ayrı parça olarak korur, metin bozulmaz.
-                for kelime in re.split(r"(\s+)", parca):
-                    yield kelime
-                    if kelime.strip():
-                        time.sleep(0.004)  # kelime başına çok kısa bekleme: daktilo etkisi
+    if hafiza.plan:  # plan daha önce yazıldıysa Gemini'ye tekrar sormadan hafızadan göster
+        st.markdown(hafiza.plan)
+    elif hafiza.plan_yaz:
+        hafiza.plan_yaz = False  # hata olsa bile her tıklamada tekrar tekrar Gemini'ye gitmesin
+        akis = None
+        with st.status("Plan hazırlanıyor... 🏃", expanded=True) as durum:
+            try:
+                ilk_parca, akis, kullanilan_model = akis_baslat(
+                    kullanici_mesaji_olustur(profil, makrolar, supplementler), durum)
+                durum.update(label="Plan yazılıyor ✍️", state="complete", expanded=False)
+            except Exception as hata:
+                durum.update(label="Plan oluşturulamadı", state="error")
+                st.error(f"Biraz sonra tekrar dene. Hata: {hata}")
 
-        try:
-            st.write_stream(parcalar())  # metni geldikçe ekrana yazar
-            st.caption(f"Bu planı {kullanilan_model} hazırladı.")
-        except Exception as hata:
-            st.error(f"Plan yazılırken bağlantı koptu, tekrar dene. Hata: {hata}")
+        if akis:
+            def _hepsi(ilk, kalan):
+                """İlk parçayı ve kalan parçaların metinlerini sırayla verir."""
+                if ilk.text:
+                    yield ilk.text
+                for parca in kalan:
+                    if parca.text:
+                        yield parca.text
+
+            def parcalar():
+                """Gelen parçaların metnini sırayla verir (generator)."""
+                for parca in _hepsi(ilk_parca, akis):
+                    # Gemini bazen büyük parçalar gönderiyor; kelime kelime vererek akışı görünür kılıyoruz.
+                    # re.split boşlukları da ayrı parça olarak korur, metin bozulmaz.
+                    for kelime in re.split(r"(\s+)", parca):
+                        yield kelime
+                        if kelime.strip():
+                            time.sleep(0.004)  # kelime başına çok kısa bekleme: daktilo etkisi
+
+            try:
+                hafiza.plan = st.write_stream(parcalar())  # ekrana yazar ve bitince metnin tamamını döndürür
+                st.caption(f"Bu planı {kullanilan_model} hazırladı.")
+            except Exception as hata:
+                st.error(f"Plan yazılırken bağlantı koptu, tekrar dene. Hata: {hata}")
 
     # Yapay zekâ unutsa bile uyarı her zaman görünsün diye kodla da ekliyoruz
     st.warning("⚠️ Bu bir sağlık tavsiyesi değildir. Yeni bir programa başlamadan önce bir uzmana danışın.")

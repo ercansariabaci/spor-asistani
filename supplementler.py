@@ -61,6 +61,14 @@ KATALOG = [
 HEDEF_KULLANIM = 0.85  # bütçenin en az %85'ini kullanmaya çalış
 
 
+def _profil_bilgisi(profil):
+    """Profilden seçimde gereken 3 bilgiyi çıkarır: hedef, seviye (0/1/2), salon mu."""
+    hedef = next(h for h in ("Kilo verme", "Kas kazanma", "Genel sağlık") if h in profil["hedef"])
+    seviye = SEVIYE_SIRASI[profil["seviye"]]
+    salon = "salon" in profil["yer"].lower()
+    return hedef, seviye, salon
+
+
 def _uygun_mu(urun, hedef, seviye, salon, hedefe_bak=True):
     """Ürün bu kullanıcıya önerilebilir mi?"""
     if urun.get("otomatik_secilmez"):           # özel ihtiyaç ürünü, otomatik önerme
@@ -70,10 +78,13 @@ def _uygun_mu(urun, hedef, seviye, salon, hedefe_bak=True):
     return seviye >= urun["seviye"] and (salon or not urun["sadece_salon"])
 
 
-def _doldur(adaylar, secilenler, kalan):
-    """Adayları sırayla dener; sığan ve grubu tekrar etmeyen ürünü ekler. Kalan parayı döndürür."""
+def _doldur(adaylar, secilenler, kalan, haric=()):
+    """Adayları sırayla dener; sığan ve grubu tekrar etmeyen ürünü ekler. Kalan parayı döndürür.
+
+    haric: kullanıcının listeden çıkardığı ürün adları (bunlar tekrar önerilmez).
+    """
     for urun in adaylar:
-        if urun in secilenler:
+        if urun in secilenler or urun["ad"] in haric:
             continue
         secilen_gruplar = [u.get("grup") for u in secilenler]
         if urun.get("grup") and urun["grup"] in secilen_gruplar:  # ikinci protein tozu alma
@@ -82,15 +93,20 @@ def _doldur(adaylar, secilenler, kalan):
             secilenler.append(urun)
             kalan -= urun["aylik_tl"]
         elif urun.get("yarim_olabilir") and urun["aylik_tl"] // 2 <= kalan:
-            # Tam paket sığmıyorsa gün aşırı kullanım (yarı maliyet) dene
-            yarim = dict(urun, ad=urun["ad"] + " – gün aşırı (~15 servis/ay)", aylik_tl=urun["aylik_tl"] // 2)
+            # Tam paket sığmıyorsa gün aşırı kullanım (yarı maliyet) dene.
+            # "kaynak": ekranda adı değişse de katalogdaki asıl ürünü bilelim (Değiştir tuşu için).
+            yarim = dict(urun, ad=urun["ad"] + " – gün aşırı (~15 servis/ay)",
+                         aylik_tl=urun["aylik_tl"] // 2, kaynak=urun["ad"])
             secilenler.append(yarim)
             kalan -= yarim["aylik_tl"]
     return kalan
 
 
-def supplement_sec(profil, makrolar):
+def supplement_sec(profil, makrolar, haric=(), eklenenler=()):
     """Bütçeyi önem sırasına göre doldurur. Uygun değilse boş liste döner.
+
+    haric: kullanıcının "Değiştir" ile çıkardığı ürünler (bir daha seçilmez).
+    eklenenler: kullanıcının "yerine bu gelsin" diye kendi seçtiği ürünler (önce bunlar konur).
 
     1. tur: Sadece hedefe uygun ürünler (whey tam sığmazsa gün aşırı kullanımla).
     2. tur: Bütçenin %85'i dolmadıysa hedef şartını gevşetip seviyeye uygun diğer ürünlere bakar.
@@ -100,13 +116,14 @@ def supplement_sec(profil, makrolar):
     """
     if makrolar is None:          # 18 yaş altı veya sağlık durumu: supplement yok
         return []
-    hedef = next(h for h in ("Kilo verme", "Kas kazanma", "Genel sağlık") if h in profil["hedef"])
-    seviye = SEVIYE_SIRASI[profil["seviye"]]
-    salon = "salon" in profil["yer"].lower()
+    hedef, seviye, salon = _profil_bilgisi(profil)
     butce = profil["bütçe"]
 
-    secilenler = []
-    kalan = _doldur([u for u in KATALOG if _uygun_mu(u, hedef, seviye, salon)], secilenler, butce)
+    # Önce kullanıcının kendi seçtiği yedek ürünler
+    secilenler = [u for u in KATALOG if u["ad"] in eklenenler]
+    kalan = butce - sum(u["aylik_tl"] for u in secilenler)
+
+    kalan = _doldur([u for u in KATALOG if _uygun_mu(u, hedef, seviye, salon)], secilenler, kalan, haric)
 
     def yeterli():
         return butce == 0 or (butce - kalan) / butce >= HEDEF_KULLANIM
@@ -114,20 +131,41 @@ def supplement_sec(profil, makrolar):
     # 2. tur: Hedef şartını gevşet (seviye, salon ve güvenlik şartları aynen geçerli)
     if not yeterli():
         kalan = _doldur([u for u in KATALOG if _uygun_mu(u, hedef, seviye, salon, hedefe_bak=False)],
-                        secilenler, kalan)
+                        secilenler, kalan, haric)
 
     # 3. tur: Bütçe yüksekse whey konsantreyi izolata yükselt (daha saf, daha kolay sindirilir)
     if not yeterli():
         for i, urun in enumerate(secilenler):
-            if urun["ad"] == "Whey protein (konsantre)":
+            if urun["ad"] == "Whey protein (konsantre)" and urun["ad"] not in eklenenler:
                 izolat = next(u for u in KATALOG if u["ad"].startswith("Whey izolat"))
                 fark = izolat["aylik_tl"] - urun["aylik_tl"]
-                if fark <= kalan:
-                    secilenler[i] = dict(izolat, ad="Whey izolat (bütçen yettiği için konsantre yerine)")
+                if fark <= kalan and izolat["ad"] not in haric:  # izolatı çıkardıysa yükseltme
+                    secilenler[i] = dict(izolat, ad="Whey izolat (bütçen yettiği için konsantre yerine)",
+                                         kaynak=izolat["ad"])
                     kalan -= fark
 
     # 4. tur: Hâlâ dolmadıysa bir üst seviyenin ürünlerini de aç
     if not yeterli() and seviye < 2:
         kalan = _doldur([u for u in KATALOG if _uygun_mu(u, hedef, seviye + 1, salon)],
-                        secilenler, kalan)
+                        secilenler, kalan, haric)
     return secilenler
+
+
+def alternatifler(profil, secilenler, cikan, haric=()):
+    """"cikan" ürünün yerine konabilecek ürünleri döndürür.
+
+    Şartlar: listede zaten yok, kullanıcı daha önce çıkarmamış, seviyeye ve yere (salon/ev) uygun,
+    aynı gruptan ikinci ürün olmuyor ve bütçeye sığıyor (çıkanın parası da geri gelir).
+    Hedef şartı yok ve "otomatik seçilmez" ürünler de var: burada seçimi kullanıcı yapıyor
+    (ör. vegan biri whey yerine bitkisel proteini kendisi seçebilir).
+    """
+    _, seviye, salon = _profil_bilgisi(profil)
+    digerleri = [u for u in secilenler if u["ad"] != cikan["ad"]]
+    kalan = profil["bütçe"] - sum(u["aylik_tl"] for u in digerleri)
+    dolu_gruplar = {u.get("grup") for u in digerleri if u.get("grup")}
+    listedekiler = {u.get("kaynak", u["ad"]) for u in secilenler}
+    return [u for u in KATALOG
+            if u["ad"] not in listedekiler and u["ad"] not in haric
+            and seviye >= u["seviye"] and (salon or not u["sadece_salon"])
+            and u.get("grup") not in dolu_gruplar
+            and u["aylik_tl"] <= kalan]
